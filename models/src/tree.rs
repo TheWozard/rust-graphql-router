@@ -1,12 +1,13 @@
 use std::collections::VecDeque;
 
 // Tree represents a standard tree data structure
+#[derive(Debug)]
 pub struct Tree<T> {
     pub value: T,
     pub children: Vec<Tree<T>>,
 }
 
-impl<'a, T: 'a> Tree<T> {
+impl<'a, T: Clone + 'a> Tree<T> {
     fn iter(&'a self) -> TreeIterator<'a, '_, T> {
         TreeIterator::new(self)
     }
@@ -40,12 +41,30 @@ impl<'a, T: 'a + std::cmp::PartialEq> Tree<T> {
 }
 
 // TreeIterator<T> is an iterator for a Tree<T> that provides optional conditional.
-pub struct TreeIterator<'a: 'b, 'b, T> {
-    queue: VecDeque<&'a Tree<T>>,
+pub struct TreeIterator<'a: 'b, 'b, T: Clone> {
+    queue: VecDeque<TreeIterationState<'a, T>>,
     condition: Box<dyn Fn(&'b T) -> bool + 'b>,
 }
 
-impl<'a: 'b, 'b, T> TreeIterator<'a, 'b, T> {
+#[derive(Clone, Debug)]
+pub struct TreeIterationState<'a, T: Clone> {
+    tree: &'a Tree<T>,
+    parent: Option<Box<TreeIterationState<'a, T>>>,
+}
+
+impl<'a, T: Clone> TreeIterationState<'a, T> {
+    fn path_to_root(&self) -> Vec<&Tree<T>> {
+        let mut path = Vec::new();
+        let mut current = self;
+        while let Some(parent) = &current.parent {
+            path.push(parent.tree);
+            current = parent;
+        }
+        path
+    }
+}
+
+impl<'a: 'b, 'b, T: Clone> TreeIterator<'a, 'b, T> {
     // new creates a new TreeIterator<T> for a given Tree<T> that iterates all nodes in a breath first approach.
     fn new(tree: &'a Tree<T>) -> TreeIterator<'a, 'b, T> {
         TreeIterator::new_with_condition(tree, |_t| true)
@@ -59,7 +78,7 @@ impl<'a: 'b, 'b, T> TreeIterator<'a, 'b, T> {
     ) -> TreeIterator<'a, 'b, T> {
         let mut queue = VecDeque::new();
         if condition(&tree.value) {
-            queue.push_back(tree);
+            queue.push_back(TreeIterationState { tree, parent: None });
         }
         TreeIterator {
             queue,
@@ -68,15 +87,20 @@ impl<'a: 'b, 'b, T> TreeIterator<'a, 'b, T> {
     }
 }
 
-impl<'a: 'b, 'b, T> Iterator for TreeIterator<'a, 'b, T> {
-    type Item = &'a Tree<T>;
+impl<'a: 'b, 'b, T: Clone> Iterator for TreeIterator<'a, 'b, T> {
+    type Item = TreeIterationState<'a, T>;
     fn next(&mut self) -> Option<Self::Item> {
         while let Some(node) = self.queue.pop_front() {
             // If we should iterated this node
-            if (self.condition)(&node.value) {
+            if (self.condition)(&node.tree.value) {
                 // Add children to the queue
-                for child in node.children.iter() {
-                    self.queue.push_back(child)
+                for child in node.tree.children.iter() {
+                    self.queue.push_back(TreeIterationState {
+                        // I don't love the fact that we have to store clones of the data
+                        // but we need to persist the info even after node has been consumed.
+                        tree: child,
+                        parent: Some(Box::new(node.clone())),
+                    })
                 }
                 return Some(node);
             }
@@ -107,7 +131,7 @@ mod tests {
             #[test]
             fn $name() {
                 let (tree, expected) = $value;
-                assert!(vec_compare(&expected, &tree.iter().map(|n| n.value).collect()));
+                assert!(vec_compare(&expected, &tree.iter().map(|n| n.tree.value).collect()));
             }
         )*}
     }
@@ -129,7 +153,7 @@ mod tests {
             #[test]
             fn $name() {
                 let (tree, expected) = $value;
-                assert!(vec_compare(&expected, &tree.iter_condition($condition).map(|n| n.value).collect()));
+                assert!(vec_compare(&expected, &tree.iter_condition($condition).map(|n| n.tree.value).collect()));
             }
         )*}
     }
@@ -190,5 +214,24 @@ mod tests {
                 Tree{value: TestValues::C, children:vec![]},
             ]},
         ]}, true),
+    }
+
+    macro_rules! test_path_to_root {
+        ($($name:ident: $value:expr,)*) => {$(
+            #[test]
+            fn $name() {
+                let (tree, find, path) = $value;
+                assert!(vec_compare(&tree.iter().find(|n| n.tree.value == find)
+                    .unwrap().path_to_root().iter().map(|n| n.value).collect(), &path))
+            }
+        )*}
+    }
+
+    test_path_to_root! {
+        path_to_root: (Tree{value: TestValues::A, children: vec![
+            Tree{value: TestValues::B, children: vec![
+                Tree{value: TestValues::C, children:vec![]},
+            ]},
+        ]}, TestValues::C, vec![TestValues::B, TestValues::A]),
     }
 }
