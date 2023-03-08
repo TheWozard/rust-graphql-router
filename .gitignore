@@ -1,6 +1,9 @@
 
 # Rust generated code
 /*/target
+/*/Cargo.lock
 
 # VSCode configuration
 .vscode
+
+#
